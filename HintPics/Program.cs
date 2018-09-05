@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -29,79 +30,147 @@ namespace HintPics
             @"screen (?<Name>[^ ]+):",
             RegexOptions.Compiled);
 
-        private readonly Dictionary<string, Image> images = new Dictionary<string, Image>();
-
-
+        private readonly Dictionary<string, string> images = new Dictionary<string, string>();
+        private Bitmap bitmap = null;
+        private Graphics graphics = null;
+        private string screenName = null;
+        private int boniFound = 0;
 
         private int Run(string scriptFile)
         {
             string gameDir = Path.GetDirectoryName(Path.GetFullPath(scriptFile)) ?? @"\";
             Directory.SetCurrentDirectory(gameDir);
 
-            ReadImages();
-
-            FindScreens("scripts");
+            ScanFile("script.rpy", true);
+            FindScreens("scripts", true);
+            FindScreens("scripts", false);
 
             return 0;
         }
 
-        private void FindScreens(string dir)
+        private void FindScreens(string dir, bool imagesOnly)
         {
             foreach (string directory in Directory.GetDirectories(dir))
-                FindScreens(directory);
+                FindScreens(directory, imagesOnly);
 
             foreach (string file in Directory.GetFiles(dir, "*.rpy"))
-                ScanFile(file);
+                ScanFile(file, imagesOnly);
         }
 
-        private void ScanFile(string file)
+        private void ScanFile(string file, bool imagesOnly)
         {
-            Image bitmap = null;
-            Graphics G = null;
 
-            try
+            using (TextReader textReader = new StreamReader(file))
             {
-                using (TextReader textReader = new StreamReader(file))
+                for (string line = textReader.ReadLine()?.Trim(); line != null; line = textReader.ReadLine()?.Trim())
                 {
-                    for (string line = textReader.ReadLine()?.Trim(); line != null; line = textReader.ReadLine()?.Trim())
+                    if (line == "")
+                        continue;
+
+                    if (imagesOnly)
                     {
-                        if (line == "")
+                        Match M1 = rxImage.Match(line);
+                        if (M1.Success)
+                        {
+                            string name = M1.Groups["Name"].Value;
+                            string path = M1.Groups["Path"].Value;
+                            if (path.StartsWith("/"))
+                                path = path.Substring(1);
+                            images[name] = path;
                             continue;
+                        }
 
-                        Match M = rxScreen.Match(line);
-                        if (!M.Success)
-                            return;
-
-                        if (!images.TryGetValue(M.Groups["Name"].Value, out Image image))
-                            return;
-
-                        bitmap = (Image) image.Clone();
-                        G = Graphics.FromImage(bitmap);
-                        G.PageUnit = GraphicsUnit.Pixel;
-                        break;
+                        continue;
                     }
 
-                    if (G == null)
-                        return;
+                    Match M2 = rxScreen.Match(line);
+                    if (M2.Success)
+                    {
+                        SaveCurrentImage();
+                        screenName = M2.Groups["Name"].Value;
+                        if (!images.TryGetValue(screenName, out string imagePath))
+                            continue;
+                        bitmap = (Bitmap)Image.FromFile(imagePath);
+                        graphics = Graphics.FromImage(bitmap);
+                        graphics.PageUnit = GraphicsUnit.Pixel;
+                        continue;
+                    }
 
-                    if (!FindImageButtons(G, textReader))
-                        return;
+                    if (line == "imagebutton:" && bitmap != null)
+                    {
+                        int? xPos = null, yPos = null;
+                        string hoverImage = null;
+                        int? indent = null;
+                        while (true)
+                        {
+                            line = textReader.ReadLine();
+                            if (line == null)
+                                break;
 
-                    string outPath = $@"hints/{file}";
-                    outPath = Path.ChangeExtension(outPath, ".jpg");
-                    G.Dispose();
-                    G = null;
+                            if (indent.HasValue)
+                            {
+                                if (indent.Value != line.TakeWhile(c => c == ' ').Count())
+                                    break;
+                            }
+                            else
+                                indent = line.TakeWhile(c => c == ' ').Count();
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? ".");
-                    if (bitmap is Bitmap bmp)
-                        bmp.Save(outPath, ImageFormat.Jpeg);
+                            string[] parts = line.Split(" ".ToCharArray(), 2, StringSplitOptions.RemoveEmptyEntries);
+                            switch (parts[0])
+                            {
+                                case "xpos":
+                                    xPos = int.Parse(parts[1]);
+                                    break;
+                                case "ypos":
+                                    yPos = int.Parse(parts[1]);
+                                    break;
+                                case "hover":
+                                    hoverImage = parts[1].Trim('\"', '/');
+                                    break;
+                            }
+                        }
+
+                        if (xPos.HasValue && yPos.HasValue && hoverImage != null)
+                        {
+                            if (!hoverImage.Contains("/Bonus/"))
+                                continue;
+                            using (Bitmap hover = (Bitmap) Image.FromFile(hoverImage))
+                            {
+                                Rectangle rc = new Rectangle(xPos.Value, yPos.Value, hover.Width, hover.Height);
+                                rc.Inflate(3, 3);
+
+                                using (Brush br = new SolidBrush(Color.Red))
+                                    graphics.FillRectangle(br, rc);
+                                graphics.DrawImageUnscaled(hover, xPos.Value, yPos.Value);
+                                ++boniFound;
+                            }
+                        }
+                    }
                 }
+                SaveCurrentImage();
             }
-            finally
+        }
+
+        private void SaveCurrentImage()
+        {
+            if (bitmap == null)
+                return;
+
+            string outPath = $@"hints/{screenName}";
+            outPath = Path.ChangeExtension(outPath, ".jpg");
+
+            graphics.Dispose();
+            graphics = null;
+
+            if (boniFound > 0)
             {
-                G?.Dispose();
-                bitmap?.Dispose();
+                Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? ".");
+                bitmap.Save(outPath, ImageFormat.Jpeg);
             }
+
+            bitmap.Dispose();
+            bitmap = null;
+            boniFound = 0;
         }
 
         private bool FindImageButtons(Graphics graphics, TextReader textReader)
@@ -155,25 +224,6 @@ namespace HintPics
 
 
             return true;
-        }
-
-        private void ReadImages()
-        {
-            using (TextReader textReader = new StreamReader("script.rpy"))
-            {
-                for (string line = textReader.ReadLine()?.Trim(); line != null; line = textReader.ReadLine()?.Trim())
-                {
-                    Match M = rxImage.Match(line);
-                    if (!M.Success)
-                        continue;
-
-                    string name = M.Groups["Name"].Value;
-                    string path = M.Groups["Path"].Value.Replace("/", @"\");
-                    if (path.StartsWith(@"\"))
-                        path = $".{path}";
-                    images[name] = Image.FromFile(path);
-                }
-            }
         }
     }
 }
