@@ -77,6 +77,7 @@ namespace HintPics
 
                         bitmap = (Image) image.Clone();
                         G = Graphics.FromImage(bitmap);
+                        G.PageUnit = GraphicsUnit.Pixel;
                         break;
                     }
 
@@ -105,6 +106,54 @@ namespace HintPics
 
         private bool FindImageButtons(Graphics graphics, TextReader textReader)
         {
+            bool found = false;
+            for (string line = textReader.ReadLine()?.Trim(); line != null; line = textReader.ReadLine()?.Trim())
+            {
+                if (line == "imagebutton:")
+                    found |= ParseImageButton(graphics, textReader);
+            }
+            return found;
+        }
+
+        private bool ParseImageButton(Graphics graphics, TextReader textReader)
+        {
+            string line = textReader.ReadLine()?.Trim();
+            if (line == null || !line.StartsWith("xpos ") || !int.TryParse(line.Substring(5), out int xPos))
+                return false;
+
+            line = textReader.ReadLine()?.Trim();
+            if (line == null || !line.StartsWith("ypos ") || !int.TryParse(line.Substring(5), out int yPos))
+                return false;
+
+            line = textReader.ReadLine()?.Trim();
+            if (line == null || !line.StartsWith("focus_mask "))
+                return false;
+
+            line = textReader.ReadLine()?.Trim();
+            if (line == null || !line.StartsWith("idle "))
+                return false;
+            string idleImagePath = line.Substring(5).Trim(" \t\"".ToCharArray());
+
+            line = textReader.ReadLine()?.Trim();
+            if (line == null || !line.StartsWith("hover "))
+                return false;
+            string hoverImagePath = line.Substring(6).Trim(" \t\"".ToCharArray());
+
+            if (!hoverImagePath.Contains("/Bonus/"))
+                return false;
+
+            if (!(Image.FromFile(hoverImagePath) is Bitmap hoverImage))
+                return false;
+
+            Rectangle rc = new Rectangle(xPos, yPos, hoverImage.Width, hoverImage.Height);
+            rc.Inflate(2, 2);
+
+            using (Brush br = new SolidBrush(Color.Red))
+                graphics.FillRectangle(br, rc);
+
+            graphics.DrawImageUnscaled(hoverImage, xPos, yPos);
+
+
             return true;
         }
 
