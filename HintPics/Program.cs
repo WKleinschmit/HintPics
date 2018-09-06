@@ -42,6 +42,9 @@ namespace HintPics
             Directory.SetCurrentDirectory(gameDir);
 
             ScanFile("script.rpy", true);
+            if (File.Exists("missing.txt"))
+                ScanFile("missing.txt", true);
+            ScanFile("script.rpy", true);
             FindScreens("scripts", true);
             FindScreens("scripts", false);
 
@@ -88,15 +91,15 @@ namespace HintPics
                     {
                         SaveCurrentImage();
                         screenName = M2.Groups["Name"].Value;
-                        if (!images.TryGetValue(screenName, out string imagePath))
-                            continue;
-                        bitmap = (Bitmap)Image.FromFile(imagePath);
-                        graphics = Graphics.FromImage(bitmap);
-                        graphics.PageUnit = GraphicsUnit.Pixel;
-                        continue;
+                        if (images.TryGetValue(screenName, out string imagePath) && File.Exists(imagePath))
+                        {
+                            bitmap = (Bitmap) Image.FromFile(imagePath);
+                            graphics = Graphics.FromImage(bitmap);
+                            graphics.PageUnit = GraphicsUnit.Pixel;
+                        }                        continue;
                     }
 
-                    if (line == "imagebutton:" && bitmap != null)
+                    if (line == "imagebutton:")
                     {
                         int? xPos = null, yPos = null;
                         string hoverImage = null;
@@ -106,10 +109,12 @@ namespace HintPics
                             line = textReader.ReadLine();
                             if (line == null)
                                 break;
+                            if (line == "")
+                                continue;
 
                             if (indent.HasValue)
                             {
-                                if (indent.Value != line.TakeWhile(c => c == ' ').Count())
+                                if (indent.Value > line.TakeWhile(c => c == ' ').Count())
                                     break;
                             }
                             else
@@ -119,13 +124,17 @@ namespace HintPics
                             switch (parts[0])
                             {
                                 case "xpos":
-                                    xPos = int.Parse(parts[1]);
+                                    if (int.TryParse(parts[1], out int x))
+                                        xPos = x;
                                     break;
                                 case "ypos":
-                                    yPos = int.Parse(parts[1]);
+                                    if (int.TryParse(parts[1], out int y))
+                                        yPos = y;
                                     break;
                                 case "hover":
                                     hoverImage = parts[1].Trim('\"', '/');
+                                    if (!File.Exists(hoverImage))
+                                        hoverImage = null;
                                     break;
                             }
                         }
@@ -134,13 +143,22 @@ namespace HintPics
                         {
                             if (!hoverImage.Contains("/Bonus/"))
                                 continue;
+
+                            if (graphics == null)
+                            {
+                                File.AppendAllText("missing.txt", $"image {screenName} = \"images/\"\n");
+                                continue;
+                            }
                             using (Bitmap hover = (Bitmap) Image.FromFile(hoverImage))
                             {
                                 Rectangle rc = new Rectangle(xPos.Value, yPos.Value, hover.Width, hover.Height);
                                 rc.Inflate(3, 3);
+                                rc.Offset(1,1);
 
                                 using (Brush br = new SolidBrush(Color.Red))
                                     graphics.FillRectangle(br, rc);
+                                using (Pen pn = new Pen(Color.DarkGoldenrod, 2))
+                                    graphics.DrawRectangle(pn, rc);
                                 graphics.DrawImageUnscaled(hover, xPos.Value, yPos.Value);
                                 ++boniFound;
                             }
@@ -157,7 +175,7 @@ namespace HintPics
                 return;
 
             string outPath = $@"hints/{screenName}";
-            outPath = Path.ChangeExtension(outPath, ".jpg");
+            outPath = Path.ChangeExtension(outPath, ".png");
 
             graphics.Dispose();
             graphics = null;
@@ -165,7 +183,7 @@ namespace HintPics
             if (boniFound > 0)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? ".");
-                bitmap.Save(outPath, ImageFormat.Jpeg);
+                bitmap.Save(outPath, ImageFormat.Png);
             }
 
             bitmap.Dispose();
