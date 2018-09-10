@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using System.IO.Pipes;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -31,10 +30,10 @@ namespace HintPics
             RegexOptions.Compiled);
 
         private readonly Dictionary<string, string> images = new Dictionary<string, string>();
-        private Bitmap bitmap = null;
-        private Graphics graphics = null;
-        private string screenName = null;
-        private int boniFound = 0;
+        private Bitmap bitmap;
+        private Graphics graphics;
+        private string screenName;
+        private int boniFound;
 
         private int Run(string scriptFile)
         {
@@ -80,7 +79,6 @@ namespace HintPics
                             if (path.StartsWith("/"))
                                 path = path.Substring(1);
                             images[name] = path;
-                            continue;
                         }
 
                         continue;
@@ -93,10 +91,11 @@ namespace HintPics
                         screenName = M2.Groups["Name"].Value;
                         if (images.TryGetValue(screenName, out string imagePath) && File.Exists(imagePath))
                         {
-                            bitmap = (Bitmap) Image.FromFile(imagePath);
+                            bitmap = (Bitmap)Image.FromFile(imagePath);
                             graphics = Graphics.FromImage(bitmap);
                             graphics.PageUnit = GraphicsUnit.Pixel;
-                        }                        continue;
+                        }
+                        continue;
                     }
 
                     if (line == "imagebutton:")
@@ -149,17 +148,18 @@ namespace HintPics
                                 File.AppendAllText("missing.txt", $"image {screenName} = \"images/\"\n");
                                 continue;
                             }
-                            using (Bitmap hover = (Bitmap) Image.FromFile(hoverImage))
+                            using (Bitmap hover = (Bitmap)Image.FromFile(hoverImage))
                             {
-                                Rectangle rc = new Rectangle(xPos.Value, yPos.Value, hover.Width, hover.Height);
-                                rc.Inflate(3, 3);
-                                rc.Offset(1,1);
+                                Rectangle rc = new Rectangle(
+                                    xPos.Value, yPos.Value, hover.Width, hover.Height);
 
-                                using (Brush br = new SolidBrush(Color.Red))
+                                rc.Inflate(3, 3);
+
+                                using (Brush br = new SolidBrush(Color.FromArgb(64, Color.Red)))
                                     graphics.FillRectangle(br, rc);
                                 using (Pen pn = new Pen(Color.DarkGoldenrod, 2))
                                     graphics.DrawRectangle(pn, rc);
-                                graphics.DrawImageUnscaled(hover, xPos.Value, yPos.Value);
+                                graphics.DrawImage(hover, xPos.Value, yPos.Value, hover.Width, hover.Height);
                                 ++boniFound;
                             }
                         }
@@ -189,59 +189,6 @@ namespace HintPics
             bitmap.Dispose();
             bitmap = null;
             boniFound = 0;
-        }
-
-        private bool FindImageButtons(Graphics graphics, TextReader textReader)
-        {
-            bool found = false;
-            for (string line = textReader.ReadLine()?.Trim(); line != null; line = textReader.ReadLine()?.Trim())
-            {
-                if (line == "imagebutton:")
-                    found |= ParseImageButton(graphics, textReader);
-            }
-            return found;
-        }
-
-        private bool ParseImageButton(Graphics graphics, TextReader textReader)
-        {
-            string line = textReader.ReadLine()?.Trim();
-            if (line == null || !line.StartsWith("xpos ") || !int.TryParse(line.Substring(5), out int xPos))
-                return false;
-
-            line = textReader.ReadLine()?.Trim();
-            if (line == null || !line.StartsWith("ypos ") || !int.TryParse(line.Substring(5), out int yPos))
-                return false;
-
-            line = textReader.ReadLine()?.Trim();
-            if (line == null || !line.StartsWith("focus_mask "))
-                return false;
-
-            line = textReader.ReadLine()?.Trim();
-            if (line == null || !line.StartsWith("idle "))
-                return false;
-            string idleImagePath = line.Substring(5).Trim(" \t\"".ToCharArray());
-
-            line = textReader.ReadLine()?.Trim();
-            if (line == null || !line.StartsWith("hover "))
-                return false;
-            string hoverImagePath = line.Substring(6).Trim(" \t\"".ToCharArray());
-
-            if (!hoverImagePath.Contains("/Bonus/"))
-                return false;
-
-            if (!(Image.FromFile(hoverImagePath) is Bitmap hoverImage))
-                return false;
-
-            Rectangle rc = new Rectangle(xPos, yPos, hoverImage.Width, hoverImage.Height);
-            rc.Inflate(2, 2);
-
-            using (Brush br = new SolidBrush(Color.Red))
-                graphics.FillRectangle(br, rc);
-
-            graphics.DrawImageUnscaled(hoverImage, xPos, yPos);
-
-
-            return true;
         }
     }
 }
